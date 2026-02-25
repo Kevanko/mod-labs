@@ -1,63 +1,24 @@
 """
-Лабораторная 3: Генерация графов, похожих на реальные сети.
-100 точек на плоскости 100×100; рёбра по вероятностям P_ij (две формулы);
-циклы недопустимы; выбор вершины по степеням, вероятности пересчитываются.
+Лабораторная 3 (чистая версия):
+- генерирует только 4 вариации параметров;
+- по 5 графов на каждую вариацию (итого 20);
+- пишет краткий отчет в images/interesting_4x5/README.md.
 """
-import csv
+
 import os
 import shutil
-import sys
-from collections import defaultdict
-
 import numpy as np
 import matplotlib.pyplot as plt
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 IMAGES_DIR = os.path.join(SCRIPT_DIR, "images")
-GRAPHS_DIR = os.path.join(SCRIPT_DIR, "graphs")
-EXP_DIR = os.path.join(GRAPHS_DIR, "exp")
-POW_DIR = os.path.join(GRAPHS_DIR, "pow")
-METRICS_CSV = os.path.join(GRAPHS_DIR, "metrics.csv")
-EXP_METRICS = os.path.join(EXP_DIR, "metrics.csv")
-POW_METRICS = os.path.join(POW_DIR, "metrics.csv")
-INTERESTING_DIR = os.path.join(IMAGES_DIR, "interesting")
-
-
-def formula_param_dir(formula, param):
-    """Папка с графами для одной формулы (параметра): graphs/exp/0.01 или graphs/pow/0.3."""
-    base = EXP_DIR if formula == "exp" else POW_DIR
-    return os.path.join(base, str(param))
-
-
-os.makedirs(IMAGES_DIR, exist_ok=True)
-os.makedirs(GRAPHS_DIR, exist_ok=True)
-os.makedirs(EXP_DIR, exist_ok=True)
-os.makedirs(POW_DIR, exist_ok=True)
-os.makedirs(INTERESTING_DIR, exist_ok=True)
+OUT_DIR = os.path.join(IMAGES_DIR, "interesting_4x5")
 
 N_POINTS = 100
 SIDE = 100.0
-N_EDGES_TARGET = 99
-SEED = 42
-USE_DIFFERENT_POINTS_PER_GRAPH = True
-# Ограничение степени вершины: None = без ограничения, иначе хабы слабее, граф ветвистее
-MAX_DEGREE_CAP = 6
-
-# Графов на одну комбинацию. --batch 50 --eight: по 50 графов на каждую из 8 «формул» (4 exp + 4 pow)
-N_PER_CONFIG = 1
-USE_8_CONFIGS = False
-args = sys.argv[1:]
-for i, arg in enumerate(args):
-    if arg == "--batch" and i + 1 < len(args):
-        N_PER_CONFIG = int(args[i + 1])
-        break
-if "--eight" in args:
-    USE_8_CONFIGS = True
 
 
 class UnionFind:
-    """СНМ для проверки циклов: только рёбра между разными компонентами."""
-
     def __init__(self, n):
         self.parent = list(range(n))
         self.rank = [0] * n
@@ -79,14 +40,12 @@ class UnionFind:
         return True
 
 
-def generate_points(n=N_POINTS, side=SIDE, seed=SEED):
-    """100 случайных точек в [0, side]×[0, side]."""
+def generate_points(seed):
     rng = np.random.default_rng(seed)
-    return rng.uniform(0, side, size=(n, 2))
+    return rng.uniform(0, SIDE, size=(N_POINTS, 2))
 
 
 def dist_matrix(pts):
-    """Матрица евклидовых расстояний; диагональ не используется."""
     n = len(pts)
     D = np.zeros((n, n))
     for i in range(n):
@@ -96,49 +55,39 @@ def dist_matrix(pts):
     return D
 
 
-def p_exp(d, a):
-    """Формула 1: P_ij = e^(-a·d_ij²). При d=0 возвращаем 0 (петли не нужны)."""
+def p_exp(d, a, b):
     if d <= 0:
         return 0.0
-    return np.exp(-a * d * d)
+    return np.exp(-a * (d ** b))
 
 
 def p_pow(d, b):
-    """Формула 2: P_ij = 1 / (d_ij^b). При d=0 возвращаем 0. Нижний порог d_min чтобы не взрывать при малых d."""
     d_safe = max(d, 1e-6)
     return 1.0 / (d_safe ** b)
 
 
-def build_graph(pts, D, n_edges, prob_fn, prob_arg, rng):
-    """
-    Строит граф без циклов: n_edges рёбер.
-    prob_fn(d) — функция вероятности (p_exp или p_pow с замыканием по a/b).
-    Выбор вершины i — с весами (degree_i + 1); выбор j — пропорционально P_ij среди других компонент.
-    """
-    n = len(pts)
+def build_graph(D, n_edges, prob_fn, prob_arg, rng, max_degree_cap):
+    n = D.shape[0]
     uf = UnionFind(n)
     degree = np.zeros(n, dtype=int)
     edges = []
 
     for _ in range(n_edges):
-        # Вершины, у которых есть хотя бы один кандидат в другой компоненте
         candidates_i = []
         for i in range(n):
+            if max_degree_cap is not None and degree[i] >= max_degree_cap:
+                continue
             for j in range(n):
                 if i != j and uf.find(i) != uf.find(j) and D[i, j] > 0:
                     candidates_i.append(i)
                     break
-        if MAX_DEGREE_CAP is not None:
-            candidates_i = [i for i in candidates_i if degree[i] < MAX_DEGREE_CAP]
         if not candidates_i:
             break
 
-        # Выбор i с вероятностью пропорциональной (degree_i + 1) — пересчёт по степеням
         weights_i = np.array([degree[i] + 1 for i in candidates_i], dtype=float)
         weights_i /= weights_i.sum()
         i = rng.choice(candidates_i, p=weights_i)
 
-        # Кандидаты j: другая компонента, d_ij > 0
         comp_i = uf.find(i)
         candidates_j = [j for j in range(n) if j != i and uf.find(j) != comp_i and D[i, j] > 0]
         if not candidates_j:
@@ -149,505 +98,170 @@ def build_graph(pts, D, n_edges, prob_fn, prob_arg, rng):
         if s <= 0:
             continue
         probs /= s
-        idx = rng.choice(len(candidates_j), p=probs)
-        j = candidates_j[int(idx)]
+        j = candidates_j[int(rng.choice(len(candidates_j), p=probs))]
 
         uf.union(i, j)
         degree[i] += 1
         degree[j] += 1
         edges.append((i, j))
 
-    # Проверка: в лесу на n вершинах с c компонентами ровно n - c рёбер (циклов нет)
-    n_comp = sum(1 for v in range(n) if uf.find(v) == v)
-    assert len(edges) == n - n_comp, "ожидается лес без циклов"
     return edges, degree
 
 
-def prob_exp(d, a):
-    return p_exp(d, a)
-
-
-def prob_pow(d, b):
-    return p_pow(d, b)
-
-
 def mean_edge_length(edges, D):
-    """Средняя длина ребра (для сравнения графов)."""
     if not edges:
         return 0.0
     return sum(D[i, j] for i, j in edges) / len(edges)
 
 
-def run_one(pts, D, label, prob_fn, prob_arg, rng, save_path=None, n_edges=None):
-    """Строит один граф; если save_path задан — рисует и сохраняет. Возвращает (edges, degree, avg_len)."""
-    if n_edges is None:
-        n_edges = N_EDGES_TARGET
-    edges, degree = build_graph(pts, D, n_edges, prob_fn, prob_arg, rng)
-    avg_len = mean_edge_length(edges, D)
-    if save_path:
-        fig, ax = plt.subplots(figsize=(10, 10))
-        ax.scatter(pts[:, 0], pts[:, 1], s=15, c="steelblue", zorder=2)
-        for i, j in edges:
-            ax.plot([pts[i, 0], pts[j, 0]], [pts[i, 1], pts[j, 1]], "k-", lw=0.4, alpha=0.7, zorder=1)
-        ax.set_xlim(-5, SIDE + 5)
-        ax.set_ylim(-5, SIDE + 5)
-        ax.set_aspect("equal")
-        ax.set_title(f"{label}\n(ср. длина ребра: {avg_len:.1f})")
-        ax.set_xlabel("x")
-        ax.set_ylabel("y")
-        plt.tight_layout()
-        plt.savefig(save_path, dpi=120, bbox_inches="tight")
-        plt.close()
-        print(f"  Сохранено: {save_path}")
-    return edges, degree, avg_len
+def draw_graph(pts, edges, title, save_path):
+    fig, ax = plt.subplots(figsize=(10, 10))
+    ax.scatter(pts[:, 0], pts[:, 1], s=15, c="steelblue", zorder=2)
+    for i, j in edges:
+        ax.plot([pts[i, 0], pts[j, 0]], [pts[i, 1], pts[j, 1]], "k-", lw=0.4, alpha=0.7, zorder=1)
+    ax.set_xlim(-5, SIDE + 5)
+    ax.set_ylim(-5, SIDE + 5)
+    ax.set_aspect("equal")
+    ax.set_title(title)
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=120, bbox_inches="tight")
+    plt.close()
 
 
-def analyze(edges, degree, label, prob_name, prob_val, avg_edge_len=0.0):
-    """Статистики и краткий анализ «на что похоже / с чем сравнить»."""
-    n = len(degree)
-    m = len(edges)
-    deg = degree
-    avg_deg = 2 * m / n if n else 0
-    max_deg = int(deg.max()) if n else 0
+def generate_interesting_4x5():
+    presets = [
+        {
+            "id": "v1_exp_global",
+            "title": "Вариация 1 (exp): экстремально глобальные связи и хабы",
+            "formula": "exp",
+            "a": 0.002,
+            "b": 0.6,
+            "n_edges": 99,
+            "max_degree_cap": None,
+            "looks_like": "Яркая сеть «центр–периферия»: много длинных рёбер и выраженные хабы.",
+            "use_cases": "Транспортные сети с центральными узлами, иерархия филиалов, магистральные коммуникации.",
+            "param_effect": "Очень малый a и b<1 дают слабое затухание по расстоянию.",
+        },
+        {
+            "id": "v2_exp_local",
+            "title": "Вариация 2 (exp): экстремально локальная сеть",
+            "formula": "exp",
+            "a": 1.2,
+            "b": 3.8,
+            "n_edges": 70,
+            "max_degree_cap": 4,
+            "looks_like": "Короткорёберная и разреженная сеть из соседей.",
+            "use_cases": "Сенсорные сети, IoT на ограниченной территории, локальные mesh-сети.",
+            "param_effect": "Большие a и b резко подавляют дальние рёбра.",
+        },
+        {
+            "id": "v3_pow_hubs",
+            "title": "Вариация 3 (1/d^b): дальнобойная разреженная сеть (почти цепочная)",
+            "formula": "pow",
+            "b": 0.12,
+            "n_edges": 55,
+            "max_degree_cap": 2,
+            "looks_like": "Дальние связи есть, но структура вытянута в ветви и цепочки.",
+            "use_cases": "Линейные/магистральные схемы, последовательные маршруты.",
+            "param_effect": "Малый b сохраняет дальние рёбра, но cap=2 подавляет хабы.",
+        },
+        {
+            "id": "v4_pow_local",
+            "title": "Вариация 4 (1/d^b): сверхлокальная соседская сеть",
+            "formula": "pow",
+            "b": 7.0,
+            "n_edges": 70,
+            "max_degree_cap": 4,
+            "looks_like": "Почти только связи с ближайшими соседями.",
+            "use_cases": "Географически ограниченные сети доступа, локальные инженерные сети.",
+            "param_effect": "Очень большой b делает дальние связи почти невозможными.",
+        },
+    ]
+
+    if os.path.isdir(OUT_DIR):
+        shutil.rmtree(OUT_DIR)
+    os.makedirs(OUT_DIR, exist_ok=True)
 
     lines = [
-        f"--- {label} ---",
-        f"Параметры: {prob_name} = {prob_val}.",
-        f"Рёбер: {m}, вершин: {n}. Средняя длина ребра: {avg_edge_len:.1f}.",
-        f"Средняя степень: {avg_deg:.2f}, макс. степень: {max_deg}.",
-        f"Распределение степеней (кратко): большинство степеней в диапазоне 1–{min(max_deg, 5)}.",
-    ]
-
-    # Интерпретация по форме графа
-    if max_deg >= 8:
-        lines.append("На что похоже: граф с выраженным «хабом» — одна или несколько вершин с большой степенью; напоминает звёздную топологию или иерархическую сеть (например, центр + периферия в транспортной или организационной сети).")
-        lines.append("С чем сравнить: дерево «звезда», предпочтительное присоединение (Barabási–Albert) без петель; или граф «центр–периферия».")
-    elif max_deg <= 3 and avg_deg < 2.5:
-        lines.append("На что похоже: разреженная сеть, рёбра в основном короткие (малые расстояния); напоминает локальные связи в пространстве — соседние узлы, сенсорная сеть или граф ближайших соседей.")
-        lines.append("С чем сравнить: минимальное остовное дерево (MST) по тем же точкам; геометрический граф с порогом по расстоянию; случайное дерево с пространственной предпочтением коротких рёбер.")
-    else:
-        lines.append("На что похоже: промежуточный вариант — смесь локальных и более длинных связей; может напоминать транспортную или коммуникационную сеть с несколькими узлами пересадок.")
-        lines.append("С чем сравнить: случайное дерево на тех же точках; дерево k ближайших соседей (k-NN); граф с вероятностью связи, зависящей от расстояния (как в данной модели).")
-
-    return "\n".join(lines)
-
-
-def analyze_batch(csv_path):
-    """Читает metrics.csv, группирует по (formula, param), строит графики закономерностей, дописывает выводы в analysis.md."""
-    if not os.path.isfile(csv_path):
-        return
-    rows = []
-    with open(csv_path, "r", encoding="utf-8") as f:
-        for r in csv.DictReader(f):
-            r["param"] = float(r["param"])
-            r["avg_edge_len"] = float(r["avg_edge_len"])
-            r["max_deg"] = int(r["max_deg"])
-            r["n_edges"] = int(r["n_edges"])
-            rows.append(r)
-    if not rows:
-        return
-    groups = defaultdict(list)
-    for r in rows:
-        key = (r["formula"], r["param"])
-        groups[key].append(r)
-    # Агрегаты
-    exp_params, exp_avg, exp_std, exp_maxd, exp_maxd_std = [], [], [], [], []
-    pow_params, pow_avg, pow_std, pow_maxd, pow_maxd_std = [], [], [], [], []
-    for (formula, param), group in sorted(groups.items()):
-        avgs = [x["avg_edge_len"] for x in group]
-        maxds = [x["max_deg"] for x in group]
-        mean_avg = np.mean(avgs)
-        std_avg = np.std(avgs)
-        mean_md = np.mean(maxds)
-        std_md = np.std(maxds)
-        if formula == "exp":
-            exp_params.append(param)
-            exp_avg.append(mean_avg)
-            exp_std.append(std_avg)
-            exp_maxd.append(mean_md)
-            exp_maxd_std.append(std_md)
-        else:
-            pow_params.append(param)
-            pow_avg.append(mean_avg)
-            pow_std.append(std_avg)
-            pow_maxd.append(mean_md)
-            pow_maxd_std.append(std_md)
-    # Графики
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-    if exp_params:
-        axes[0].errorbar(exp_params, exp_avg, yerr=exp_std, fmt="o-", capsize=3)
-        axes[0].set_xlabel("a")
-        axes[0].set_ylabel("Средняя длина ребра")
-        axes[0].set_title("Формула 1: P = exp(-a·d²)")
-        axes[0].grid(True, alpha=0.3)
-    if pow_params:
-        axes[1].errorbar(pow_params, pow_avg, yerr=pow_std, fmt="s-", capsize=3, color="C1")
-        axes[1].set_xlabel("b")
-        axes[1].set_ylabel("Средняя длина ребра")
-        axes[1].set_title("Формула 2: P = 1/d^b")
-        axes[1].grid(True, alpha=0.3)
-    plt.tight_layout()
-    plt.savefig(os.path.join(IMAGES_DIR, "batch_avg_edge_len.png"), dpi=120, bbox_inches="tight")
-    plt.close()
-    print(f"  Сохранено: {os.path.join(IMAGES_DIR, 'batch_avg_edge_len.png')}")
-
-    fig2, ax2 = plt.subplots(figsize=(8, 5))
-    if exp_params:
-        ax2.errorbar(exp_params, exp_maxd, yerr=exp_maxd_std, fmt="o-", capsize=3, label="exp(-a·d²)")
-    if pow_params:
-        ax2.errorbar(pow_params, pow_maxd, yerr=pow_maxd_std, fmt="s-", capsize=3, label="1/d^b")
-    ax2.set_xlabel("Параметр (a или b)")
-    ax2.set_ylabel("Макс. степень (среднее по серии)")
-    ax2.set_title("Максимальная степень вершины от параметра")
-    ax2.legend()
-    ax2.grid(True, alpha=0.3)
-    plt.tight_layout()
-    plt.savefig(os.path.join(IMAGES_DIR, "batch_max_degree.png"), dpi=120, bbox_inches="tight")
-    plt.close()
-    print(f"  Сохранено: {os.path.join(IMAGES_DIR, 'batch_max_degree.png')}")
-
-    # Дописать выводы в analysis.md
-    analysis_path = os.path.join(SCRIPT_DIR, "analysis.md")
-    block = [
+        "# 4 вариации × 5 графов",
         "",
-        "## Выводы по серии",
-        "",
-        "По серии сгенерированных графов (по группе на каждую комбинацию формула–параметр):",
-        "",
-        "| Формула   | Параметр | Ср. длина (mean ± std) | Макс. степень (mean ± std) |",
-        "|-----------|----------|-------------------------|----------------------------|",
-    ]
-    W2 = [10, 10, 26, 28]
-    for (formula, param), group in sorted(groups.items()):
-        avgs = [x["avg_edge_len"] for x in group]
-        maxds = [x["max_deg"] for x in group]
-        block.append(fmt_table_row([formula, str(param), f"{np.mean(avgs):.1f} ± {np.std(avgs):.1f}", f"{np.mean(maxds):.1f} ± {np.std(maxds):.1f}"], W2))
-    block.extend([
-        "",
-        "**Закономерности:** с ростом параметра a (или b) средняя длина ребра уменьшается — граф становится «локальнее». "
-        "Максимальная степень может расти при малых a/b (появление хабов при более равномерном выборе длинных рёбер).",
-        "",
-        "**На что похоже:** при малых a и b преобладают длинные рёбра и выраженные хабы — графы напоминают центр–периферию, транспортную или организационную сеть с узлами пересадок. При больших a и b рёбра в основном короткие, структура локальная — ближе к сенсорной сети, графу ближайших соседей или минимальному остовному дереву с пространственным предпочтением.",
-        "",
-        "Графики сохранены: `images/batch_avg_edge_len.png`, `images/batch_max_degree.png`.",
-        "",
-    ])
-    with open(analysis_path, "a", encoding="utf-8") as f:
-        f.write("\n".join(block))
-    print("  В analysis.md дописан блок «Выводы по серии».")
-
-
-def fmt_table_row(cells, widths):
-    """Собирает строку таблицы с выравниванием по колонкам (ровная таблица)."""
-    parts = []
-    for i, (cell, w) in enumerate(zip(cells, widths)):
-        s = str(cell)
-        if i == 0:
-            parts.append(s.ljust(w)[:w])
-        else:
-            parts.append(s.rjust(w)[:w])
-    return "| " + " | ".join(parts) + " |"
-
-
-def append_interesting_8_to_analysis():
-    """Дописывает в analysis.md блок про 8 выбранных графов и творческую часть."""
-    analysis_path = os.path.join(SCRIPT_DIR, "analysis.md")
-    block = [
-        "",
-        "---",
-        "",
-        "## 8 выбранных графов",
-        "",
-        "В каталоге `images/interesting/` сохранены 8 графов:",
-        "",
-        "| Формула | Параметры | Суть |",
-        "|---------|-----------|------|",
-        "| exp | a = 0.01, 0.06, 0.2, 0.8 | от длинных рёбер и хабов к коротким и локальным |",
-        "| 1/d^b | b = 0.2, 0.9, 2.0, 4.0 | то же для степенной формулы |",
-        "",
-        "---",
-        "",
-        "## Творческая часть: восемь графов и реальный мир",
-        "",
-        "Меняли параметры — получали разные графы. Ниже восемь примеров: картинка и коротко простыми словами — что видно и на что похоже в жизни.",
-        "",
-        "### Граф 1. Формула exp, малый a — длинные рёбра и «звезда»",
-        "",
-        "![Граф 1](images/interesting/1_exp_0.01.png)",
-        "",
-        "На картинке много длинных линий и одна или несколько точек-«звёзд». В жизни: одна главная станция метро, один центр в компании. Маленький a — модель разрешает далёкие связи.",
-        "",
-        "### Граф 2. Формула exp, переход",
-        "",
-        "![Граф 2](images/interesting/2_exp_0.06.png)",
-        "",
-        "Несколько заметных узлов, смесь длинных и коротких рёбер. Как сеть с пересадками или несколько филиалов.",
-        "",
-        "### Граф 3. Формула exp, переход",
-        "",
-        "![Граф 3](images/interesting/3_exp_0.2.png)",
-        "",
-        "Промежуточный вариант: хабы и локальные «гнёзда». Коммуникационная или логистическая сеть.",
-        "",
-        "### Граф 4. Формула exp, большой a — всё рядом",
-        "",
-        "![Граф 4](images/interesting/4_exp_0.8.png)",
-        "",
-        "Рёбра короткие, связи с соседями. Сенсорная сеть, соседние дома. Большой a — только близкие связи.",
-        "",
-        "### Граф 5. Формула 1/d^b, малый b",
-        "",
-        "![Граф 5](images/interesting/5_pow_0.2.png)",
-        "",
-        "Длинные рёбра и хабы, как граф 1. Один центр — транспорт, организация, инфраструктура.",
-        "",
-        "### Граф 6. Формула 1/d^b, переход",
-        "",
-        "![Граф 6](images/interesting/6_pow_0.9.png)",
-        "",
-        "Несколько узлов, смесь рёбер. Сеть с пересадками, параметр b уже давит на расстояние.",
-        "",
-        "### Граф 7. Формула 1/d^b, переход к локальности",
-        "",
-        "![Граф 7](images/interesting/7_pow_2.0.png)",
-        "",
-        "Коротких рёбер больше. Часть связей централизована, часть — на соседях.",
-        "",
-        "### Граф 8. Формула 1/d^b, большой b — только соседи",
-        "",
-        "![Граф 8](images/interesting/8_pow_4.0.png)",
-        "",
-        "Почти все рёбра короткие. Сенсорная сеть, граф соседей. Большой b — далёкие пары почти не соединяются.",
-        "",
-        "---",
-        "",
-        "**Итог.** Чем больше параметр (a или b), тем «локальнее» граф. При малых параметрах — централизованные сети с хабами. Одну модель можно настроить под разные типы сетей — от метро с одним узлом до локальных сенсоров.",
+        "Сгенерировано 20 графов: по 5 на каждую вариацию.",
         "",
     ]
-    with open(analysis_path, "a", encoding="utf-8") as f:
-        f.write("\n".join(block))
 
+    for idx, cfg in enumerate(presets, 1):
+        subdir = os.path.join(OUT_DIR, f"{idx}_{cfg['id']}")
+        os.makedirs(subdir, exist_ok=True)
 
-def _regenerate_and_save(formula, param, seed_rng, path, n_edges=99):
-    """По (formula, param, seed_rng) пересобирает граф и сохраняет картинку в path."""
-    if formula == "exp":
-        seed_pts = seed_rng - 100
-        prob_fn, prob_arg = prob_exp, param
-        label = f"Формула 1: P = exp(-a·d²), a = {param}"
-    else:
-        seed_pts = seed_rng - 150
-        prob_fn, prob_arg = prob_pow, param
-        label = f"Формула 2: P = 1/d^b, b = {param}"
-    pts = generate_points(seed=seed_pts)
-    D = dist_matrix(pts)
-    rng = np.random.default_rng(seed_rng)
-    run_one(pts, D, label, prob_fn, prob_arg, rng, path, n_edges=n_edges)
+        avg_lens = []
+        max_degs = []
+        edge_counts = []
 
+        formula_line = (
+            f"- Формула: `exp(-a*d^b)`, `a={cfg['a']}`, `b={cfg['b']}`"
+            if cfg["formula"] == "exp"
+            else f"- Формула: `1/d^b`, `b={cfg['b']}`"
+        )
+        lines.extend([
+            f"## {cfg['title']}",
+            "",
+            formula_line,
+            f"- На что похоже: {cfg['looks_like']}",
+            f"- Где применимо: {cfg['use_cases']}",
+            f"- Связь с параметрами: {cfg['param_effect']}",
+            "",
+        ])
 
-def _select_median_row(rows, key="avg_edge_len"):
-    """Из списка словарей возвращает строку с медианным значением key."""
-    if not rows:
-        return None
-    s = sorted(rows, key=lambda x: x[key])
-    return s[len(s) // 2]
+        for k in range(1, 6):
+            seed_pts = 7000 + k * 13
+            seed_rng = 9000 + idx * 100 + k * 29
+            pts = generate_points(seed=seed_pts)
+            D = dist_matrix(pts)
+            rng = np.random.default_rng(seed_rng)
 
+            if cfg["formula"] == "exp":
+                a, b = cfg["a"], cfg["b"]
+                prob_fn = lambda d, _: p_exp(d, a, b)
+                prob_arg = None
+                title = f"Вариация {idx}: exp(-a*d^b), a={a}, b={b}"
+            else:
+                b = cfg["b"]
+                prob_fn = lambda d, x: p_pow(d, x)
+                prob_arg = b
+                title = f"Вариация {idx}: 1/d^b, b={b}"
 
-def select_and_save_interesting_8():
-    """
-    Читает graphs/exp/metrics.csv и graphs/pow/metrics.csv, для каждого из 8 целевых (formula, param)
-    выбирает граф с медианной средней длиной ребра (наиболее типичный), пересобирает и сохраняет в images/interesting/.
-    """
-    target_exp = [0.01, 0.06, 0.2, 0.8]
-    target_pow = [0.2, 0.9, 2.0, 4.0]
-    selected = []
+            edges, degree = build_graph(D, cfg["n_edges"], prob_fn, prob_arg, rng, cfg["max_degree_cap"])
+            avg_len = mean_edge_length(edges, D)
 
-    for path, formula, targets in [(EXP_METRICS, "exp", target_exp), (POW_METRICS, "pow", target_pow)]:
-        if not os.path.isfile(path):
-            continue
-        by_param = defaultdict(list)
-        with open(path, "r", encoding="utf-8") as f:
-            r = csv.DictReader(f)
-            for row in r:
-                row["param"] = float(row["param"])
-                row["seed"] = int(row["seed"])
-                row["avg_edge_len"] = float(row["avg_edge_len"])
-                row["max_deg"] = int(row["max_deg"])
-                row["n_edges"] = int(row.get("n_edges", 99))
-                by_param[row["param"]].append(row)
-        for param in targets:
-            rows = by_param.get(param, [])
-            if rows:
-                med = _select_median_row(rows)
-                if med:
-                    selected.append((formula, param, med["seed"], med["n_edges"]))
+            filename = f"graph_{k}.png"
+            save_path = os.path.join(subdir, filename)
+            draw_graph(pts, edges, title, save_path)
 
-    index_lines = ["# 8 выбранных графов (из пула по формуле)", ""]
-    for i, item in enumerate(selected[:8], 1):
-        formula, param, seed_rng = item[0], item[1], item[2]
-        n_edges = item[3] if len(item) > 3 else 99
-        base = f"{i}_{formula}_{param}.png"
-        dst = os.path.join(INTERESTING_DIR, base)
-        src = os.path.join(formula_param_dir(formula, param), f"seed_{seed_rng}.png")
-        if os.path.isfile(src):
-            shutil.copy2(src, dst)
-        else:
-            _regenerate_and_save(formula, param, seed_rng, dst, n_edges=n_edges)
-        index_lines.append(f"- **{base}** — {formula} param={param} (медианный по пулу)")
-        print(f"  Интересный {i}: {dst}")
-    with open(os.path.join(INTERESTING_DIR, "README.md"), "w", encoding="utf-8") as f:
-        f.write("\n".join(index_lines + ["", "Выбраны графы с медианной средней длиной ребра для каждого параметра."]))
-    print(f"  Список: {os.path.join(INTERESTING_DIR, 'README.md')}")
+            avg_lens.append(avg_len)
+            max_degs.append(int(degree.max()) if len(degree) else 0)
+            edge_counts.append(len(edges))
 
+            lines.append(f"![{cfg['id']} #{k}](./{idx}_{cfg['id']}/{filename})")
+            lines.append("")
 
-def save_interesting_8():
-    """
-    Либо копирует 8 графов из уже построенных (N_PER_CONFIG==1), либо выбирает 8 из пула в graphs/exp, graphs/pow (N_PER_CONFIG>=4).
-    """
-    if N_PER_CONFIG >= 4 and os.path.isfile(EXP_METRICS) and os.path.isfile(POW_METRICS):
-        select_and_save_interesting_8()
-        return
-    # Иначе копируем по одному представителю на конфиг (как раньше)
-    interesting = [
-        ("exp", 0.01), ("exp", 0.06), ("exp", 0.2), ("exp", 0.8),
-        ("pow", 0.2), ("pow", 0.9), ("pow", 2.0), ("pow", 4.0),
-    ]
-    index_lines = ["# 8 выбранных графов (закономерность по параметрам)", ""]
-    for i, (formula, param) in enumerate(interesting, 1):
-        if formula == "exp":
-            src = os.path.join(IMAGES_DIR, f"graph_exp_a{int(round(param * 100)):03d}.png")
-        else:
-            src = os.path.join(IMAGES_DIR, f"graph_pow_b{int(param * 10):02d}.png")
-        base = f"{i}_{formula}_{param}.png"
-        dst = os.path.join(INTERESTING_DIR, base)
-        if os.path.isfile(src):
-            shutil.copy2(src, dst)
-            index_lines.append(f"- **{base}**")
-            print(f"  Интересный {i}: {dst}")
-    with open(os.path.join(INTERESTING_DIR, "README.md"), "w", encoding="utf-8") as f:
-        f.write("\n".join(index_lines + ["", "Закономерность: с ростом параметра граф становится локальнее."]))
+        lines.extend([
+            f"- По 5 графам: средняя длина ребра ≈ **{np.mean(avg_lens):.1f} ± {np.std(avg_lens):.1f}**;",
+            f"  макс. степень ≈ **{np.mean(max_degs):.1f} ± {np.std(max_degs):.1f}**;",
+            f"  число рёбер ≈ **{np.mean(edge_counts):.1f}**.",
+            "",
+            "---",
+            "",
+        ])
 
+    out_md = os.path.join(OUT_DIR, "README.md")
+    with open(out_md, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
 
-def main():
-    # Режим --eight: 8 «формул» с расширенным диапазоном параметров; часть конфигов с 50 рёбрами (разреженные графы)
-    if USE_8_CONFIGS:
-        configs_exp = [(0.01, 99), (0.06, 99), (0.2, 50), (0.8, 99)]
-        configs_pow = [(0.2, 99), (0.9, 99), (2.0, 50), (4.0, 99)]
-    else:
-        configs_exp = [(0.01, 99), (0.03, 99), (0.06, 99), (0.15, 99), (0.3, 99), (0.5, 99), (0.8, 99)]
-        configs_pow = [(0.2, 99), (0.5, 99), (0.9, 99), (1.5, 99), (2.0, 99), (3.0, 99), (4.0, 99)]
-
-    comparison = []
-    csv_header = ["formula", "param", "seed", "avg_edge_len", "max_deg", "n_edges"]
-    csv_header_short = ["param", "seed", "avg_edge_len", "max_deg", "n_edges"]
-    with open(METRICS_CSV, "w", encoding="utf-8", newline="") as cf, \
-         open(EXP_METRICS, "w", encoding="utf-8", newline="") as ef, \
-         open(POW_METRICS, "w", encoding="utf-8", newline="") as pf:
-        writer = csv.writer(cf)
-        exp_writer = csv.writer(ef)
-        pow_writer = csv.writer(pf)
-        writer.writerow(csv_header)
-        exp_writer.writerow(csv_header_short)
-        pow_writer.writerow(csv_header_short)
-
-        for idx, (a, n_edges) in enumerate(configs_exp):
-            save_each = (N_PER_CONFIG > 1 or USE_8_CONFIGS)
-            if save_each:
-                os.makedirs(formula_param_dir("exp", a), exist_ok=True)
-            for k in range(N_PER_CONFIG):
-                seed_pts = (SEED + idx + k * 1000) if USE_DIFFERENT_POINTS_PER_GRAPH else SEED
-                seed_rng = SEED + 100 + idx + k * 1000
-                pts = generate_points(seed=seed_pts)
-                D = dist_matrix(pts)
-                rng = np.random.default_rng(seed_rng)
-                label = f"Формула 1: P = exp(-a·d²), a = {a}"
-                if save_each:
-                    save_path = os.path.join(formula_param_dir("exp", a), f"seed_{seed_rng}.png")
-                else:
-                    save_path = os.path.join(IMAGES_DIR, f"graph_exp_a{int(round(a * 100)):03d}.png") if k == 0 else None
-                edges, degree, avg_len = run_one(pts, D, label, prob_exp, a, rng, save_path, n_edges=n_edges)
-                row = ["exp", a, seed_rng, round(avg_len, 4), int(degree.max()), len(edges)]
-                writer.writerow(row)
-                exp_writer.writerow([a, seed_rng, round(avg_len, 4), int(degree.max()), len(edges)])
-                if k == 0:
-                    comparison.append((f"exp a={a}", avg_len, int(degree.max())))
-                    if N_PER_CONFIG == 1:
-                        print(analyze(edges, degree, label, "a", a, avg_len))
-                        print()
-
-        for idx, (b, n_edges) in enumerate(configs_pow):
-            save_each = (N_PER_CONFIG > 1 or USE_8_CONFIGS)
-            if save_each:
-                os.makedirs(formula_param_dir("pow", b), exist_ok=True)
-            for k in range(N_PER_CONFIG):
-                seed_pts = (SEED + 50 + idx + k * 1000) if USE_DIFFERENT_POINTS_PER_GRAPH else SEED
-                seed_rng = SEED + 200 + idx + k * 1000
-                pts = generate_points(seed=seed_pts)
-                D = dist_matrix(pts)
-                rng = np.random.default_rng(seed_rng)
-                label = f"Формула 2: P = 1/d^b, b = {b}"
-                if save_each:
-                    save_path = os.path.join(formula_param_dir("pow", b), f"seed_{seed_rng}.png")
-                else:
-                    save_path = os.path.join(IMAGES_DIR, f"graph_pow_b{int(b * 10):02d}.png") if k == 0 else None
-                edges, degree, avg_len = run_one(pts, D, label, prob_pow, b, rng, save_path, n_edges=n_edges)
-                row = ["pow", b, seed_rng, round(avg_len, 4), int(degree.max()), len(edges)]
-                writer.writerow(row)
-                pow_writer.writerow([b, seed_rng, round(avg_len, 4), int(degree.max()), len(edges)])
-                if k == 0:
-                    comparison.append((f"1/d^b b={b}", avg_len, int(degree.max())))
-                    if N_PER_CONFIG == 1:
-                        print(analyze(edges, degree, label, "b", b, avg_len))
-                        print()
-
-    if N_PER_CONFIG > 1:
-        print(f"Сгенерировано {N_PER_CONFIG} графов на каждую конфигурацию. Метрики: {METRICS_CSV}, {EXP_DIR}, {POW_DIR}")
-
-    # В анализ пишем только сводку и таблицы (без 14 длинных блоков)
-    header = [
-        "# Анализ графов (лаба 3)",
-        "",
-        "**Содержание:** сводка по конфигурациям → сравнение (таблица) → выводы → выводы по серии → 8 выбранных графов → творческая часть.",
-        "",
-        "---",
-        "",
-        "## Сводка по конфигурациям",
-        "",
-        f"Построено графов: {'4×' + str(N_PER_CONFIG) + ' для exp(-a·d²) и 4×' + str(N_PER_CONFIG) + ' для 1/d^b' if USE_8_CONFIGS else '7×' + str(N_PER_CONFIG) + ' для exp(-a·d²) и 7×' + str(N_PER_CONFIG) + ' для 1/d^b'} (в папках graphs/exp, graphs/pow). Во всех — 100 вершин, до 99 рёбер, циклов нет.",
-        "",
-        "---",
-        "",
-        "## Сравнение графов (разница по параметрам)",
-        "",
-        "| Конфигурация      | Ср. длина ребра | Макс. степень |",
-        "|-------------------|-----------------|---------------|",
-    ]
-    W = [20, 18, 16]
-    for name, avg_len, max_d in comparison:
-        header.append(fmt_table_row([name, f"{avg_len:.1f}", str(max_d)], W))
-    header.extend([
-        "",
-        "**Кратко:** чем меньше a или b — тем длиннее рёбра и чаще хабы; чем больше — тем граф «локальнее». Циклов нет.",
-        "",
-        "---",
-        "",
-        "## Выводы",
-        "",
-        "- С ростом параметра **a** или **b** средняя длина ребра **падает**, граф становится более локальным.",
-        "- При **малых** параметрах чаще появляются **хабы**.",
-        "- Обе формулы дают **похожее** поведение.",
-        "",
-        "---",
-        "",
-    ])
-    analysis_path = os.path.join(SCRIPT_DIR, "analysis.md")
-    with open(analysis_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(header))
-    print(f"\nАнализ записан: {analysis_path}")
-
-    analyze_batch(METRICS_CSV)
-    save_interesting_8()
-    append_interesting_8_to_analysis()
+    print(f"Сгенерировано: {OUT_DIR}")
+    print(f"Описание: {out_md}")
 
 
 if __name__ == "__main__":
-    main()
+    generate_interesting_4x5()
