@@ -61,9 +61,9 @@ def p_exp(d, a, b):
     return np.exp(-a * (d ** b))
 
 
-def p_pow(d, a, b):
+def p_pow(d, b):
     d_safe = max(d, 1e-6)
-    return 1.0 / (a * (d_safe ** b))
+    return 1.0 / (d_safe ** b)
 
 
 def build_graph(D, n_edges, prob_fn, prob_arg, rng, max_degree_cap):
@@ -157,28 +157,27 @@ def generate_interesting_4x5():
             "param_effect": "Большие a и b резко подавляют дальние рёбра.",
         },
         {
-            "id": "v3_pow_hubs",
-            "title": "Вариация 3 (1/(a*d^b)): дальнобойная разреженная сеть (почти цепочная)",
-            "formula": "pow",
-            "a": 0.8,
-            "b": 0.12,
-            "n_edges": 55,
-            "max_degree_cap": 2,
-            "looks_like": "Дальние связи есть, но структура вытянута в ветви и цепочки.",
-            "use_cases": "Линейные/магистральные схемы, последовательные маршруты.",
-            "param_effect": "Небольшие a и b сохраняют дальние рёбра, но cap=2 подавляет хабы.",
+            "id": "v3_exp_medium",
+            "title": "Вариация 3 (exp): средние по дальности связи",
+            "formula": "exp",
+            "a": 0.05,
+            "b": 1.5,
+            "n_edges": 80,
+            "max_degree_cap": 6,
+            "looks_like": "Умеренная смесь локальных и дальних рёбер, средние хабы.",
+            "use_cases": "Региональные сети, смешанная топология.",
+            "param_effect": "Средние a и b дают баланс между локальностью и дальними связями.",
         },
         {
-            "id": "v4_pow_local",
-            "title": "Вариация 4 (1/(a*d^b)): сверхлокальная соседская сеть",
+            "id": "v4_pow",
+            "title": "Вариация 4 (1/d^b): степенная модель, варьируется b",
             "formula": "pow",
-            "a": 1.5,
-            "b": 7.0,
+            "b": 1.2,
             "n_edges": 70,
             "max_degree_cap": 4,
-            "looks_like": "Почти только связи с ближайшими соседями.",
-            "use_cases": "Географически ограниченные сети доступа, локальные инженерные сети.",
-            "param_effect": "Большие a и b делают дальние связи почти невозможными.",
+            "looks_like": "Структура зависит от b: малый b — дальние связи, большой — локальная.",
+            "use_cases": "Модели с степенным затуханием по расстоянию.",
+            "param_effect": "В формуле 1/d^b варьируется только b.",
         },
     ]
 
@@ -204,7 +203,7 @@ def generate_interesting_4x5():
         formula_line = (
             f"- Формула: `exp(-a*d^b)`, `a={cfg['a']}`, `b={cfg['b']}`"
             if cfg["formula"] == "exp"
-            else f"- Формула: `1/(a*d^b)`, `a={cfg['a']}`, `b={cfg['b']}`"
+            else f"- Формула: `1/d^b`, `b={cfg['b']}`"
         )
         lines.extend([
             f"## {cfg['title']}",
@@ -229,10 +228,10 @@ def generate_interesting_4x5():
                 prob_arg = None
                 title = f"Вариация {idx}: exp(-a*d^b), a={a}, b={b}"
             else:
-                a, b = cfg["a"], cfg["b"]
-                prob_fn = lambda d, _: p_pow(d, a, b)
-                prob_arg = None
-                title = f"Вариация {idx}: 1/(a*d^b), a={a}, b={b}"
+                b = cfg["b"]
+                prob_fn = lambda d, x: p_pow(d, x)
+                prob_arg = b
+                title = f"Вариация {idx}: 1/d^b, b={b}"
 
             edges, degree = build_graph(D, cfg["n_edges"], prob_fn, prob_arg, rng, cfg["max_degree_cap"])
             avg_len = mean_edge_length(edges, D)
