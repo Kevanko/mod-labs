@@ -61,9 +61,9 @@ def p_exp(d, a, b):
     return np.exp(-a * (d ** b))
 
 
-def p_pow(d, b):
+def p_pow(d, a, b):
     d_safe = max(d, 1e-6)
-    return 1.0 / (d_safe ** b)
+    return 1.0 / (a * (d_safe ** b))
 
 
 def build_graph(D, n_edges, prob_fn, prob_arg, rng, max_degree_cap):
@@ -158,25 +158,27 @@ def generate_interesting_4x5():
         },
         {
             "id": "v3_pow_hubs",
-            "title": "Вариация 3 (1/d^b): дальнобойная разреженная сеть (почти цепочная)",
+            "title": "Вариация 3 (1/(a*d^b)): дальнобойная разреженная сеть (почти цепочная)",
             "formula": "pow",
+            "a": 0.8,
             "b": 0.12,
             "n_edges": 55,
             "max_degree_cap": 2,
             "looks_like": "Дальние связи есть, но структура вытянута в ветви и цепочки.",
             "use_cases": "Линейные/магистральные схемы, последовательные маршруты.",
-            "param_effect": "Малый b сохраняет дальние рёбра, но cap=2 подавляет хабы.",
+            "param_effect": "Небольшие a и b сохраняют дальние рёбра, но cap=2 подавляет хабы.",
         },
         {
             "id": "v4_pow_local",
-            "title": "Вариация 4 (1/d^b): сверхлокальная соседская сеть",
+            "title": "Вариация 4 (1/(a*d^b)): сверхлокальная соседская сеть",
             "formula": "pow",
+            "a": 1.5,
             "b": 7.0,
             "n_edges": 70,
             "max_degree_cap": 4,
             "looks_like": "Почти только связи с ближайшими соседями.",
             "use_cases": "Географически ограниченные сети доступа, локальные инженерные сети.",
-            "param_effect": "Очень большой b делает дальние связи почти невозможными.",
+            "param_effect": "Большие a и b делают дальние связи почти невозможными.",
         },
     ]
 
@@ -202,7 +204,7 @@ def generate_interesting_4x5():
         formula_line = (
             f"- Формула: `exp(-a*d^b)`, `a={cfg['a']}`, `b={cfg['b']}`"
             if cfg["formula"] == "exp"
-            else f"- Формула: `1/d^b`, `b={cfg['b']}`"
+            else f"- Формула: `1/(a*d^b)`, `a={cfg['a']}`, `b={cfg['b']}`"
         )
         lines.extend([
             f"## {cfg['title']}",
@@ -227,10 +229,10 @@ def generate_interesting_4x5():
                 prob_arg = None
                 title = f"Вариация {idx}: exp(-a*d^b), a={a}, b={b}"
             else:
-                b = cfg["b"]
-                prob_fn = lambda d, x: p_pow(d, x)
-                prob_arg = b
-                title = f"Вариация {idx}: 1/d^b, b={b}"
+                a, b = cfg["a"], cfg["b"]
+                prob_fn = lambda d, _: p_pow(d, a, b)
+                prob_arg = None
+                title = f"Вариация {idx}: 1/(a*d^b), a={a}, b={b}"
 
             edges, degree = build_graph(D, cfg["n_edges"], prob_fn, prob_arg, rng, cfg["max_degree_cap"])
             avg_len = mean_edge_length(edges, D)
