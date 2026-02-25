@@ -222,16 +222,28 @@ def generate_interesting_4x5():
             D = dist_matrix(pts)
             rng = np.random.default_rng(seed_rng)
 
+            cap_str = (
+                "без ограничения степени"
+                if cfg["max_degree_cap"] is None
+                else f"max_degree_cap={cfg['max_degree_cap']}"
+            )
+
             if cfg["formula"] == "exp":
                 a, b = cfg["a"], cfg["b"]
                 prob_fn = lambda d, _: p_exp(d, a, b)
                 prob_arg = None
-                title = f"Вариация {idx}: exp(-a*d^b), a={a}, b={b}"
+                title = (
+                    f"Вариация {idx}: P=exp(-a*d^b), a={a}, b={b}, "
+                    f"{cap_str}, n_edges={cfg['n_edges']}"
+                )
             else:
                 b = cfg["b"]
                 prob_fn = lambda d, x: p_pow(d, x)
                 prob_arg = b
-                title = f"Вариация {idx}: 1/d^b, b={b}"
+                title = (
+                    f"Вариация {idx}: P=1/d^b, b={b}, "
+                    f"{cap_str}, n_edges={cfg['n_edges']}"
+                )
 
             edges, degree = build_graph(D, cfg["n_edges"], prob_fn, prob_arg, rng, cfg["max_degree_cap"])
             avg_len = mean_edge_length(edges, D)
