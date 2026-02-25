@@ -40,6 +40,8 @@ SIDE = 100.0
 N_EDGES_TARGET = 99
 SEED = 42
 USE_DIFFERENT_POINTS_PER_GRAPH = True
+# Ограничение степени вершины: None = без ограничения, иначе хабы слабее, граф ветвистее
+MAX_DEGREE_CAP = 6
 
 # Графов на одну комбинацию. --batch 50 --eight: по 50 графов на каждую из 8 «формул» (4 exp + 4 pow)
 N_PER_CONFIG = 1
@@ -126,6 +128,8 @@ def build_graph(pts, D, n_edges, prob_fn, prob_arg, rng):
                 if i != j and uf.find(i) != uf.find(j) and D[i, j] > 0:
                     candidates_i.append(i)
                     break
+        if MAX_DEGREE_CAP is not None:
+            candidates_i = [i for i in candidates_i if degree[i] < MAX_DEGREE_CAP]
         if not candidates_i:
             break
 
@@ -174,9 +178,11 @@ def mean_edge_length(edges, D):
     return sum(D[i, j] for i, j in edges) / len(edges)
 
 
-def run_one(pts, D, label, prob_fn, prob_arg, rng, save_path=None):
+def run_one(pts, D, label, prob_fn, prob_arg, rng, save_path=None, n_edges=None):
     """Строит один граф; если save_path задан — рисует и сохраняет. Возвращает (edges, degree, avg_len)."""
-    edges, degree = build_graph(pts, D, N_EDGES_TARGET, prob_fn, prob_arg, rng)
+    if n_edges is None:
+        n_edges = N_EDGES_TARGET
+    edges, degree = build_graph(pts, D, n_edges, prob_fn, prob_arg, rng)
     avg_len = mean_edge_length(edges, D)
     if save_path:
         fig, ax = plt.subplots(figsize=(10, 10))
@@ -356,8 +362,8 @@ def append_interesting_8_to_analysis():
         "",
         "| Формула | Параметры | Суть |",
         "|---------|-----------|------|",
-        "| exp | a = 0.01, 0.06, 0.15, 0.4 | от длинных рёбер и хабов к коротким и локальным |",
-        "| 1/d^b | b = 0.3, 0.9, 1.6, 2.5 | то же для степенной формулы |",
+        "| exp | a = 0.01, 0.06, 0.2, 0.8 | от длинных рёбер и хабов к коротким и локальным |",
+        "| 1/d^b | b = 0.2, 0.9, 2.0, 4.0 | то же для степенной формулы |",
         "",
         "---",
         "",
@@ -379,19 +385,19 @@ def append_interesting_8_to_analysis():
         "",
         "### Граф 3. Формула exp, переход",
         "",
-        "![Граф 3](images/interesting/3_exp_0.15.png)",
+        "![Граф 3](images/interesting/3_exp_0.2.png)",
         "",
         "Промежуточный вариант: хабы и локальные «гнёзда». Коммуникационная или логистическая сеть.",
         "",
         "### Граф 4. Формула exp, большой a — всё рядом",
         "",
-        "![Граф 4](images/interesting/4_exp_0.4.png)",
+        "![Граф 4](images/interesting/4_exp_0.8.png)",
         "",
         "Рёбра короткие, связи с соседями. Сенсорная сеть, соседние дома. Большой a — только близкие связи.",
         "",
         "### Граф 5. Формула 1/d^b, малый b",
         "",
-        "![Граф 5](images/interesting/5_pow_0.3.png)",
+        "![Граф 5](images/interesting/5_pow_0.2.png)",
         "",
         "Длинные рёбра и хабы, как граф 1. Один центр — транспорт, организация, инфраструктура.",
         "",
@@ -403,13 +409,13 @@ def append_interesting_8_to_analysis():
         "",
         "### Граф 7. Формула 1/d^b, переход к локальности",
         "",
-        "![Граф 7](images/interesting/7_pow_1.6.png)",
+        "![Граф 7](images/interesting/7_pow_2.0.png)",
         "",
         "Коротких рёбер больше. Часть связей централизована, часть — на соседях.",
         "",
         "### Граф 8. Формула 1/d^b, большой b — только соседи",
         "",
-        "![Граф 8](images/interesting/8_pow_2.5.png)",
+        "![Граф 8](images/interesting/8_pow_4.0.png)",
         "",
         "Почти все рёбра короткие. Сенсорная сеть, граф соседей. Большой b — далёкие пары почти не соединяются.",
         "",
@@ -422,7 +428,7 @@ def append_interesting_8_to_analysis():
         f.write("\n".join(block))
 
 
-def _regenerate_and_save(formula, param, seed_rng, path):
+def _regenerate_and_save(formula, param, seed_rng, path, n_edges=99):
     """По (formula, param, seed_rng) пересобирает граф и сохраняет картинку в path."""
     if formula == "exp":
         seed_pts = seed_rng - 100
@@ -435,7 +441,7 @@ def _regenerate_and_save(formula, param, seed_rng, path):
     pts = generate_points(seed=seed_pts)
     D = dist_matrix(pts)
     rng = np.random.default_rng(seed_rng)
-    run_one(pts, D, label, prob_fn, prob_arg, rng, path)
+    run_one(pts, D, label, prob_fn, prob_arg, rng, path, n_edges=n_edges)
 
 
 def _select_median_row(rows, key="avg_edge_len"):
@@ -451,8 +457,8 @@ def select_and_save_interesting_8():
     Читает graphs/exp/metrics.csv и graphs/pow/metrics.csv, для каждого из 8 целевых (formula, param)
     выбирает граф с медианной средней длиной ребра (наиболее типичный), пересобирает и сохраняет в images/interesting/.
     """
-    target_exp = [0.01, 0.06, 0.15, 0.4]
-    target_pow = [0.3, 0.9, 1.6, 2.5]
+    target_exp = [0.01, 0.06, 0.2, 0.8]
+    target_pow = [0.2, 0.9, 2.0, 4.0]
     selected = []
 
     for path, formula, targets in [(EXP_METRICS, "exp", target_exp), (POW_METRICS, "pow", target_pow)]:
@@ -466,23 +472,26 @@ def select_and_save_interesting_8():
                 row["seed"] = int(row["seed"])
                 row["avg_edge_len"] = float(row["avg_edge_len"])
                 row["max_deg"] = int(row["max_deg"])
+                row["n_edges"] = int(row.get("n_edges", 99))
                 by_param[row["param"]].append(row)
         for param in targets:
             rows = by_param.get(param, [])
             if rows:
                 med = _select_median_row(rows)
                 if med:
-                    selected.append((formula, param, med["seed"]))
+                    selected.append((formula, param, med["seed"], med["n_edges"]))
 
     index_lines = ["# 8 выбранных графов (из пула по формуле)", ""]
-    for i, (formula, param, seed_rng) in enumerate(selected[:8], 1):
+    for i, item in enumerate(selected[:8], 1):
+        formula, param, seed_rng = item[0], item[1], item[2]
+        n_edges = item[3] if len(item) > 3 else 99
         base = f"{i}_{formula}_{param}.png"
         dst = os.path.join(INTERESTING_DIR, base)
         src = os.path.join(formula_param_dir(formula, param), f"seed_{seed_rng}.png")
         if os.path.isfile(src):
             shutil.copy2(src, dst)
         else:
-            _regenerate_and_save(formula, param, seed_rng, dst)
+            _regenerate_and_save(formula, param, seed_rng, dst, n_edges=n_edges)
         index_lines.append(f"- **{base}** — {formula} param={param} (медианный по пулу)")
         print(f"  Интересный {i}: {dst}")
     with open(os.path.join(INTERESTING_DIR, "README.md"), "w", encoding="utf-8") as f:
@@ -499,8 +508,8 @@ def save_interesting_8():
         return
     # Иначе копируем по одному представителю на конфиг (как раньше)
     interesting = [
-        ("exp", 0.01), ("exp", 0.06), ("exp", 0.15), ("exp", 0.4),
-        ("pow", 0.3), ("pow", 0.9), ("pow", 1.6), ("pow", 2.5),
+        ("exp", 0.01), ("exp", 0.06), ("exp", 0.2), ("exp", 0.8),
+        ("pow", 0.2), ("pow", 0.9), ("pow", 2.0), ("pow", 4.0),
     ]
     index_lines = ["# 8 выбранных графов (закономерность по параметрам)", ""]
     for i, (formula, param) in enumerate(interesting, 1):
@@ -519,13 +528,13 @@ def save_interesting_8():
 
 
 def main():
-    # Режим --eight: только 8 «формул» (4 exp + 4 pow), по N_PER_CONFIG графов на каждую
+    # Режим --eight: 8 «формул» с расширенным диапазоном параметров; часть конфигов с 50 рёбрами (разреженные графы)
     if USE_8_CONFIGS:
-        configs_exp = [(0.01, ""), (0.06, ""), (0.15, ""), (0.4, "")]
-        configs_pow = [(0.3, ""), (0.9, ""), (1.6, ""), (2.5, "")]
+        configs_exp = [(0.01, 99), (0.06, 99), (0.2, 50), (0.8, 99)]
+        configs_pow = [(0.2, 99), (0.9, 99), (2.0, 50), (4.0, 99)]
     else:
-        configs_exp = [(0.01, ""), (0.03, ""), (0.06, ""), (0.10, ""), (0.15, ""), (0.25, ""), (0.4, "")]
-        configs_pow = [(0.3, ""), (0.6, ""), (0.9, ""), (1.2, ""), (1.6, ""), (2.0, ""), (2.5, "")]
+        configs_exp = [(0.01, 99), (0.03, 99), (0.06, 99), (0.15, 99), (0.3, 99), (0.5, 99), (0.8, 99)]
+        configs_pow = [(0.2, 99), (0.5, 99), (0.9, 99), (1.5, 99), (2.0, 99), (3.0, 99), (4.0, 99)]
 
     comparison = []
     csv_header = ["formula", "param", "seed", "avg_edge_len", "max_deg", "n_edges"]
@@ -540,7 +549,7 @@ def main():
         exp_writer.writerow(csv_header_short)
         pow_writer.writerow(csv_header_short)
 
-        for idx, (a, _) in enumerate(configs_exp):
+        for idx, (a, n_edges) in enumerate(configs_exp):
             save_each = (N_PER_CONFIG > 1 or USE_8_CONFIGS)
             if save_each:
                 os.makedirs(formula_param_dir("exp", a), exist_ok=True)
@@ -555,7 +564,7 @@ def main():
                     save_path = os.path.join(formula_param_dir("exp", a), f"seed_{seed_rng}.png")
                 else:
                     save_path = os.path.join(IMAGES_DIR, f"graph_exp_a{int(round(a * 100)):03d}.png") if k == 0 else None
-                edges, degree, avg_len = run_one(pts, D, label, prob_exp, a, rng, save_path)
+                edges, degree, avg_len = run_one(pts, D, label, prob_exp, a, rng, save_path, n_edges=n_edges)
                 row = ["exp", a, seed_rng, round(avg_len, 4), int(degree.max()), len(edges)]
                 writer.writerow(row)
                 exp_writer.writerow([a, seed_rng, round(avg_len, 4), int(degree.max()), len(edges)])
@@ -565,7 +574,7 @@ def main():
                         print(analyze(edges, degree, label, "a", a, avg_len))
                         print()
 
-        for idx, (b, _) in enumerate(configs_pow):
+        for idx, (b, n_edges) in enumerate(configs_pow):
             save_each = (N_PER_CONFIG > 1 or USE_8_CONFIGS)
             if save_each:
                 os.makedirs(formula_param_dir("pow", b), exist_ok=True)
@@ -580,7 +589,7 @@ def main():
                     save_path = os.path.join(formula_param_dir("pow", b), f"seed_{seed_rng}.png")
                 else:
                     save_path = os.path.join(IMAGES_DIR, f"graph_pow_b{int(b * 10):02d}.png") if k == 0 else None
-                edges, degree, avg_len = run_one(pts, D, label, prob_pow, b, rng, save_path)
+                edges, degree, avg_len = run_one(pts, D, label, prob_pow, b, rng, save_path, n_edges=n_edges)
                 row = ["pow", b, seed_rng, round(avg_len, 4), int(degree.max()), len(edges)]
                 writer.writerow(row)
                 pow_writer.writerow([b, seed_rng, round(avg_len, 4), int(degree.max()), len(edges)])
