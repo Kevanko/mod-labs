@@ -1,8 +1,7 @@
 """
-Лабораторная 3 (чистая версия):
-- генерирует только 4 вариации параметров;
-- по 5 графов на каждую вариацию (итого 20);
-- пишет краткий отчет в images/interesting_4x5/README.md.
+Лабораторная 3: генерация графов, похожих на реальные сети.
+- 4 вариации параметров, по 5 графов на каждую (итого 20);
+- графы сохраняются в images/interesting_4x5/.
 """
 
 import os
@@ -108,12 +107,6 @@ def build_graph(D, n_edges, prob_fn, prob_arg, rng, max_degree_cap):
     return edges, degree
 
 
-def mean_edge_length(edges, D):
-    if not edges:
-        return 0.0
-    return sum(D[i, j] for i, j in edges) / len(edges)
-
-
 def draw_graph(pts, edges, title, save_path):
     fig, ax = plt.subplots(figsize=(10, 10))
     ax.scatter(pts[:, 0], pts[:, 1], s=15, c="steelblue", zorder=2)
@@ -185,35 +178,9 @@ def generate_interesting_4x5():
         shutil.rmtree(OUT_DIR)
     os.makedirs(OUT_DIR, exist_ok=True)
 
-    lines = [
-        "# 4 вариации × 5 графов",
-        "",
-        "Сгенерировано 20 графов: по 5 на каждую вариацию.",
-        "",
-    ]
-
     for idx, cfg in enumerate(presets, 1):
         subdir = os.path.join(OUT_DIR, f"{idx}_{cfg['id']}")
         os.makedirs(subdir, exist_ok=True)
-
-        avg_lens = []
-        max_degs = []
-        edge_counts = []
-
-        formula_line = (
-            f"- Формула: `exp(-a*d^b)`, `a={cfg['a']}`, `b={cfg['b']}`"
-            if cfg["formula"] == "exp"
-            else f"- Формула: `1/d^b`, `b={cfg['b']}`"
-        )
-        lines.extend([
-            f"## {cfg['title']}",
-            "",
-            formula_line,
-            f"- На что похоже: {cfg['looks_like']}",
-            f"- Где применимо: {cfg['use_cases']}",
-            f"- Связь с параметрами: {cfg['param_effect']}",
-            "",
-        ])
 
         for k in range(1, 6):
             seed_pts = 7000 + k * 13
@@ -246,34 +213,12 @@ def generate_interesting_4x5():
                 )
 
             edges, degree = build_graph(D, cfg["n_edges"], prob_fn, prob_arg, rng, cfg["max_degree_cap"])
-            avg_len = mean_edge_length(edges, D)
 
             filename = f"graph_{k}.png"
             save_path = os.path.join(subdir, filename)
             draw_graph(pts, edges, title, save_path)
 
-            avg_lens.append(avg_len)
-            max_degs.append(int(degree.max()) if len(degree) else 0)
-            edge_counts.append(len(edges))
-
-            lines.append(f"![{cfg['id']} #{k}](./{idx}_{cfg['id']}/{filename})")
-            lines.append("")
-
-        lines.extend([
-            f"- По 5 графам: средняя длина ребра ≈ **{np.mean(avg_lens):.1f} ± {np.std(avg_lens):.1f}**;",
-            f"  макс. степень ≈ **{np.mean(max_degs):.1f} ± {np.std(max_degs):.1f}**;",
-            f"  число рёбер ≈ **{np.mean(edge_counts):.1f}**.",
-            "",
-            "---",
-            "",
-        ])
-
-    out_md = os.path.join(OUT_DIR, "README.md")
-    with open(out_md, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines))
-
     print(f"Сгенерировано: {OUT_DIR}")
-    print(f"Описание: {out_md}")
 
 
 if __name__ == "__main__":
