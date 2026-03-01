@@ -15,7 +15,7 @@ else
   RUNNER := $(VENV_PY)
 endif
 
-IMAGES   := images/graph_variant17.png images/graph_custom.png
+IMAGES   := images/graph_variant17.png images/graph_variant17.svg images/graph_custom.png images/graph_custom.svg
 REPORT   := lab-2-otchet.docx
 
 .PHONY: all venv graphs report run clean clean-venv help
@@ -58,7 +58,7 @@ help:
 	@echo "Цели:"
 	@echo "  all     — полная сборка (по умолчанию)"
 	@echo "  venv    — создать .venv и установить requirements.txt"
-	@echo "  graphs  — построить graph_variant17.png, graph_custom.png"
+	@echo "  graphs  — построить графы (PNG 300 dpi и SVG) в images/"
 	@echo "  report  — сгенерировать lab-2-otchet.docx"
 	@echo "  run     — выполнить lab-2.py"
 	@echo "  clean   — удалить изображения и отчёт"
